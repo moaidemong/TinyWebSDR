@@ -19,20 +19,21 @@
     const HEADER = 14;
     const canvas = document.getElementById("wf");
     const ctx = canvas.getContext("2d");
-    let emaLow = 60;
-    let emaHigh = 245;
+    let emaLow = 72;
+    let emaHigh = 238;
 
     const rowImage = ctx.createImageData(bins, 1);
     const pal = new Uint8Array(256 * 3);
     function lerp(a, b, t) { return a + (b - a) * t; }
     function buildClassicPalette() {
-      // SDR++-like classic palette: deep blue -> cyan -> yellow -> white.
+      // SDR++-like classic palette: deep blue -> cyan -> yellow/orange -> white.
       const stops = [
-        [0.00, [0, 0, 10]],
-        [0.30, [0, 8, 70]],
-        [0.58, [0, 65, 205]],
-        [0.80, [35, 210, 255]],
-        [0.92, [255, 225, 90]],
+        [0.00, [0, 0, 4]],
+        [0.20, [0, 0, 28]],
+        [0.45, [0, 25, 120]],
+        [0.68, [0, 120, 255]],
+        [0.82, [255, 210, 70]],
+        [0.92, [255, 120, 40]],
         [1.00, [255, 255, 255]],
       ];
       for (let i = 0; i < 256; i++) {
@@ -57,25 +58,26 @@
     function estimateLevels(row) {
       // 1024 bins sort cost is acceptable for MVP and gives stable percentiles.
       const sorted = Array.from(row).sort((a, b) => a - b);
-      const p35 = sorted[Math.floor(sorted.length * 0.35)];
-      const p995 = sorted[Math.floor(sorted.length * 0.995)];
-      return [p35, p995];
+      const p45 = sorted[Math.floor(sorted.length * 0.45)];
+      const p998 = sorted[Math.floor(sorted.length * 0.998)];
+      return [p45, p998];
     }
 
     function drawRow(row) {
       const [low, high] = estimateLevels(row);
       emaLow = emaLow * 0.96 + low * 0.04;
       emaHigh = emaHigh * 0.96 + high * 0.04;
-      const range = Math.max(35, emaHigh - emaLow);
+      const range = Math.max(28, emaHigh - emaLow);
 
       ctx.drawImage(canvas, 0, 0, canvas.width, canvas.height - 1, 0, 1, canvas.width, canvas.height - 1);
       const d = rowImage.data;
       for (let x = 0; x < bins; x++) {
-        const normalized = (row[x] - (emaLow + 6)) / range;
+        const normalized = (row[x] - (emaLow + 10)) / range;
         const mapped = Math.max(0, Math.min(1, normalized));
-        let contrast = Math.pow(mapped, 1.7);
-        if (contrast < 0.08) contrast = 0;
-        const v = Math.round(contrast * 255);
+        let tone = Math.pow(mapped, 2.2);
+        tone += Math.pow(mapped, 8.0) * 0.25;
+        if (tone < 0.04) tone = 0;
+        const v = Math.round(Math.min(1, tone) * 255);
         const p = x * 4;
         d[p] = pal[v * 3];
         d[p + 1] = pal[v * 3 + 1];
