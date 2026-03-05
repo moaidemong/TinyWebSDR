@@ -53,7 +53,9 @@ def next_change_epoch(now_local: datetime, tz: ZoneInfo) -> float:
     return datetime.combine(tomorrow, SCHEDULE[0].start, tzinfo=tz).timestamp()
 
 
-def producer_cmd(python_bin: str, shm_name: str, profile: BandProfile) -> list[str]:
+def producer_cmd(
+    python_bin: str, shm_name: str, profile: BandProfile, control_file: str
+) -> list[str]:
     return [
         python_bin,
         "core_producer.py",
@@ -61,6 +63,10 @@ def producer_cmd(python_bin: str, shm_name: str, profile: BandProfile) -> list[s
         "rtlsdr",
         "--shm-name",
         shm_name,
+        "--audio-shm-name",
+        f"{shm_name}_audio",
+        "--control-file",
+        control_file,
         "--center-freq",
         str(profile.center_freq),
         "--sample-rate",
@@ -100,6 +106,7 @@ def main() -> None:
     p.add_argument("--timezone", default="Asia/Seoul")
     p.add_argument("--python-bin", default=sys.executable)
     p.add_argument("--warmup-sec", type=float, default=2.5)
+    p.add_argument("--control-file", default="runtime/hover_control.json")
     args = p.parse_args()
 
     tz = ZoneInfo(args.timezone)
@@ -117,7 +124,9 @@ def main() -> None:
     slot_idx = 0
 
     current_profile = find_profile(datetime.now(tz))
-    proc = subprocess.Popen(producer_cmd(args.python_bin, slots[slot_idx], current_profile))
+    proc = subprocess.Popen(
+        producer_cmd(args.python_bin, slots[slot_idx], current_profile, args.control_file)
+    )
     time.sleep(max(0.5, args.warmup_sec))
     if proc.poll() is not None:
         raise RuntimeError("initial producer failed to start")
@@ -131,7 +140,7 @@ def main() -> None:
             if desired != current_profile:
                 next_slot = 1 - slot_idx
                 new_proc = subprocess.Popen(
-                    producer_cmd(args.python_bin, slots[next_slot], desired)
+                    producer_cmd(args.python_bin, slots[next_slot], desired, args.control_file)
                 )
                 time.sleep(max(0.5, args.warmup_sec))
                 if new_proc.poll() is not None:

@@ -10,20 +10,26 @@ MVP behavior:
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import signal
 import struct
 import time
 from multiprocessing import shared_memory
+from pathlib import Path
 
 import numpy as np
 
 
 HEADER_FORMAT = "<I d H"  # seq, capture epoch seconds, bins
 HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
+AM_HEADER_FORMAT = "<I d I H"  # seq, t_capture, tuned_freq_hz, sample_count
+AM_HEADER_SIZE = struct.calcsize(AM_HEADER_FORMAT)
 DEFAULT_BINS = 8192
 DB_MIN = -110.0
 DB_MAX = -20.0
+AM_AUDIO_RATE = 8000
+AM_CHUNK_SAMPLES = 160
 
 
 class IQSource:
@@ -136,6 +142,8 @@ def build_source(
 
 def run(
     shm_name: str,
+    audio_shm_name: str,
+    control_file: str,
     sample_rate: float,
     target_fps: float,
     source_kind: str,
@@ -147,12 +155,17 @@ def run(
     hop = bins // 2
     win = nuttall_window(bins)
     shm_size = HEADER_SIZE + bins
+    am_shm_size = AM_HEADER_SIZE + (AM_CHUNK_SAMPLES * 2)
     source: IQSource | None = None
     shm: shared_memory.SharedMemory | None = None
+    am_shm: shared_memory.SharedMemory | None = None
     source = build_source(source_kind, sample_rate, center_freq, gain)
     shm = open_shared_memory(shm_name, shm_size)
+    am_shm = open_shared_memory(audio_shm_name, am_shm_size)
     buf = shm.buf
+    am_buf = am_shm.buf
     stop = False
+    control_path = Path(control_file)
 
     def _handle_stop(_sig: int, _frame: object) -> None:
         nonlocal stop
@@ -162,8 +175,13 @@ def run(
     signal.signal(signal.SIGTERM, _handle_stop)
 
     seq = 0
+    am_seq = 0
     carry = np.zeros(bins - hop, dtype=np.complex64)
     frame_interval = 1.0 / target_fps if target_fps > 0 else 0.0
+    last_control_check = 0.0
+    tuned_freq_hz = 0.0
+    nco_phase = 0.0
+    audio_accum = np.zeros(0, dtype=np.float32)
 
     try:
         while not stop:
@@ -182,6 +200,63 @@ def run(
             buf[HEADER_SIZE : HEADER_SIZE + bins] = row_u8.tobytes()
             seq += 1
 
+            now = time.time()
+            if now - last_control_check >= 0.2:
+                last_control_check = now
+                if control_path.exists():
+                    try:
+                        obj = json.loads(control_path.read_text(encoding="utf-8"))
+                        freq = float(obj.get("hover_freq_hz", 0.0))
+                        updated = float(obj.get("updated_epoch_sec", 0.0))
+                        mode = str(obj.get("mode", "am")).lower()
+                        if mode == "am" and now - updated <= 3.0:
+                            tuned_freq_hz = freq
+                        else:
+                            tuned_freq_hz = 0.0
+                    except (ValueError, OSError, json.JSONDecodeError):
+                        tuned_freq_hz = 0.0
+
+            if tuned_freq_hz > 0:
+                freq_offset = tuned_freq_hz - center_freq
+                max_off = sample_rate * 0.5
+                if freq_offset < -max_off:
+                    freq_offset = -max_off
+                elif freq_offset > max_off:
+                    freq_offset = max_off
+
+                n = block.size
+                t = np.arange(n, dtype=np.float64)
+                phase = nco_phase + (2.0 * math.pi * freq_offset / sample_rate) * t
+                mixer = np.exp(-1j * phase).astype(np.complex64)
+                mixed = block * mixer
+                nco_phase = float((phase[-1] + (2.0 * math.pi * freq_offset / sample_rate)) % (2.0 * math.pi))
+
+                am = np.abs(mixed).astype(np.float32)
+                am -= float(np.mean(am))
+                am = np.clip(am, -2.0, 2.0)
+
+                decim = max(1, int(sample_rate // AM_AUDIO_RATE))
+                usable = (am.size // decim) * decim
+                if usable > 0:
+                    am_dec = am[:usable].reshape(-1, decim).mean(axis=1)
+                    audio_accum = np.concatenate((audio_accum, am_dec)).astype(np.float32, copy=False)
+
+                if audio_accum.size >= AM_CHUNK_SAMPLES:
+                    chunk = audio_accum[:AM_CHUNK_SAMPLES]
+                    audio_accum = audio_accum[AM_CHUNK_SAMPLES:]
+                    peak = float(np.max(np.abs(chunk))) + 1e-6
+                    pcm = np.clip((chunk / peak) * 28000.0, -32768, 32767).astype(np.int16)
+                    am_payload = struct.pack(
+                        AM_HEADER_FORMAT,
+                        am_seq,
+                        now,
+                        int(round(tuned_freq_hz)),
+                        AM_CHUNK_SAMPLES,
+                    )
+                    am_buf[:AM_HEADER_SIZE] = am_payload
+                    am_buf[AM_HEADER_SIZE : AM_HEADER_SIZE + (AM_CHUNK_SAMPLES * 2)] = pcm.tobytes()
+                    am_seq += 1
+
             if frame_interval > 0:
                 elapsed = time.monotonic() - loop_start
                 sleep_s = frame_interval - elapsed
@@ -197,11 +272,19 @@ def run(
             except FileNotFoundError:
                 # Another process (or previous cleanup) may have already removed it.
                 pass
+        if am_shm is not None:
+            am_shm.close()
+            try:
+                am_shm.unlink()
+            except FileNotFoundError:
+                pass
 
 
 def main() -> None:
     p = argparse.ArgumentParser(description="TinyWebSDR FFT producer")
     p.add_argument("--shm-name", default="tinywebsdr_latest")
+    p.add_argument("--audio-shm-name", default="tinywebsdr_latest_audio")
+    p.add_argument("--control-file", default="runtime/hover_control.json")
     p.add_argument("--sample-rate", type=float, default=2_048_000.0)
     p.add_argument("--fps", type=float, default=60.0)
     p.add_argument("--source", choices=["sim", "rtlsdr"], default="sim")
@@ -211,6 +294,8 @@ def main() -> None:
     args = p.parse_args()
     run(
         args.shm_name,
+        args.audio_shm_name,
+        args.control_file,
         args.sample_rate,
         args.fps,
         args.source,

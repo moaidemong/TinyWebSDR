@@ -36,22 +36,84 @@
       font: 12px/1 Consolas, "Courier New", monospace;
       cursor: pointer;
     }
+    .hover-tip {
+      position: fixed;
+      z-index: 22;
+      pointer-events: none;
+      color: #f3f8ff;
+      background: rgba(8, 14, 28, 0.9);
+      border: 1px solid rgba(170, 210, 255, 0.45);
+      border-radius: 6px;
+      padding: 4px 6px;
+      font: 11px/1.2 Consolas, "Courier New", monospace;
+      white-space: nowrap;
+      transform: translate(10px, -14px);
+    }
+    .wave-panel {
+      position: fixed;
+      z-index: 23;
+      pointer-events: none;
+      width: 320px;
+      height: 86px;
+      background: rgba(255, 255, 255, 0.68);
+      border: 1px solid rgba(255, 255, 255, 0.88);
+      border-radius: 8px;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+      padding: 6px 8px;
+      box-sizing: border-box;
+      color: #0a1120;
+    }
+    .wave-freq {
+      font: 12px/1.2 Consolas, "Courier New", monospace;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+    .wave-canvas {
+      width: 100%;
+      height: 58px;
+      display: block;
+    }
   </style>
 </head>
 <body>
   <canvas id="wf" width="1920" height="900"></canvas>
   <div id="meta" class="meta" hidden></div>
   <button id="metaToggle" class="meta-toggle" type="button">Meta Off</button>
+  <div id="hoverTip" class="hover-tip" hidden></div>
+  <div id="wavePanel" class="wave-panel" hidden>
+    <div id="waveFreq" class="wave-freq">-</div>
+    <canvas id="waveCanvas" class="wave-canvas" width="304" height="58"></canvas>
+  </div>
   <script>
     const HEADER = 14;
     const canvas = document.getElementById("wf");
     const ctx = canvas.getContext("2d");
     const metaEl = document.getElementById("meta");
     const metaToggleEl = document.getElementById("metaToggle");
+    const hoverTipEl = document.getElementById("hoverTip");
+    const wavePanelEl = document.getElementById("wavePanel");
+    const waveFreqEl = document.getElementById("waveFreq");
+    const waveCanvasEl = document.getElementById("waveCanvas");
+    const waveCtx = waveCanvasEl.getContext("2d");
     let emaLow = 66;
     let emaHigh = 240;
     let frameBins = 0;
     let displayBins = 0;
+    let lastRow = null;
+    let hoverState = {
+      inside: false,
+      strong: false,
+      lastMoveTs: 0,
+      x: 0,
+      y: 0,
+      peakBin: -1,
+      freqHz: null,
+      strength: 0,
+    };
+    let waveVisible = false;
+    let lastHoverSendTs = 0;
+    let latestAMWave = null;
+    let latestAMWaveTs = 0;
 
     let rowImage = ctx.createImageData(1024, 1);
     let metaVisible = localStorage.getItem("tinywebsdr_meta_visible") === "1";
@@ -61,6 +123,9 @@
       sample_rate_hz: null,
       next_change_epoch_sec: null,
     };
+    const params = new URLSearchParams(location.search);
+    if (params.has("center")) currentMeta.center_freq_hz = Number(params.get("center"));
+    if (params.has("span")) currentMeta.sample_rate_hz = Number(params.get("span"));
     const pal = new Uint8Array(256 * 3);
     function lerp(a, b, t) { return a + (b - a) * t; }
     function buildClassicPalette() {
@@ -106,6 +171,12 @@
     function fmtMHz(v) {
       if (!v || !Number.isFinite(v)) return "-";
       return (v / 1_000_000).toFixed(3) + " MHz";
+    }
+
+    function fmtHz(v) {
+      if (!Number.isFinite(v) || v <= 0) return "-";
+      const khz = Math.floor(v / 1000);
+      return `${khz}KHz`;
     }
 
     function fmtLocal(v) {
@@ -154,6 +225,7 @@ Next: ${fmtLocal(currentMeta.next_change_epoch_sec)}`;
     }
 
     function drawRow(row) {
+      lastRow = row;
       if (frameBins !== row.length) frameBins = row.length;
       const [low, high] = estimateLevels(row);
       emaLow = emaLow * 0.96 + low * 0.04;
@@ -179,6 +251,193 @@ Next: ${fmtLocal(currentMeta.next_change_epoch_sec)}`;
       ctx.putImageData(rowImage, 0, 0);
     }
 
+    function showHoverTip(clientX, clientY, text) {
+      hoverTipEl.textContent = text;
+      hoverTipEl.style.left = `${clientX}px`;
+      hoverTipEl.style.top = `${clientY}px`;
+      hoverTipEl.hidden = false;
+    }
+
+    function hideHoverTip() {
+      hoverTipEl.hidden = true;
+    }
+
+    function positionWavePanel(clientX, clientY) {
+      const pad = 12;
+      const w = wavePanelEl.offsetWidth || 320;
+      const h = wavePanelEl.offsetHeight || 86;
+      let x = clientX + 16;
+      let y = clientY + 16;
+      if (x + w > window.innerWidth - pad) x = clientX - w - 16;
+      if (y + h > window.innerHeight - pad) y = clientY - h - 16;
+      if (x < pad) x = pad;
+      if (y < pad) y = pad;
+      wavePanelEl.style.left = `${x}px`;
+      wavePanelEl.style.top = `${y}px`;
+    }
+
+    function drawWave(freqHz, strength) {
+      const w = waveCanvasEl.width;
+      const h = waveCanvasEl.height;
+      waveCtx.clearRect(0, 0, w, h);
+      waveCtx.fillStyle = "rgba(255,255,255,0.20)";
+      waveCtx.fillRect(0, 0, w, h);
+      waveCtx.strokeStyle = "rgba(255,255,255,0.95)";
+      waveCtx.lineWidth = 1.6;
+      const mid = h * 0.5;
+      const amp = 8 + Math.min(1, Math.max(0, strength)) * 16;
+      waveCtx.beginPath();
+      if (latestAMWave && Array.isArray(latestAMWave.samples) && latestAMWave.samples.length > 0) {
+        const s = latestAMWave.samples;
+        for (let x = 0; x < w; x++) {
+          const idx = Math.min(s.length - 1, Math.floor((x / (w - 1)) * s.length));
+          const y = mid + (s[idx] * amp);
+          if (x === 0) waveCtx.moveTo(x, y);
+          else waveCtx.lineTo(x, y);
+        }
+      } else {
+        const cycles = 2.2 + ((Math.floor(freqHz / 1000) % 6) * 0.55);
+        const phase = performance.now() * 0.006;
+        for (let x = 0; x < w; x++) {
+          const t = x / (w - 1);
+          const y = mid + Math.sin((Math.PI * 2 * cycles * t) + phase) * amp;
+          if (x === 0) waveCtx.moveTo(x, y);
+          else waveCtx.lineTo(x, y);
+        }
+      }
+      waveCtx.stroke();
+    }
+
+    function showWavePanel(clientX, clientY, freqHz, strength) {
+      waveFreqEl.textContent = fmtHz(freqHz);
+      positionWavePanel(clientX, clientY);
+      drawWave(freqHz, strength);
+      wavePanelEl.hidden = false;
+      waveVisible = true;
+    }
+
+    function hideWavePanel() {
+      wavePanelEl.hidden = true;
+      waveVisible = false;
+    }
+
+    function estimateFreqFromBin(bin) {
+      const cf = Number(currentMeta.center_freq_hz);
+      const sr = Number(currentMeta.sample_rate_hz);
+      if (!Number.isFinite(cf) || !Number.isFinite(sr) || cf <= 0 || sr <= 0 || frameBins <= 0) {
+        return null;
+      }
+      const hzPerBin = sr / frameBins;
+      return cf - sr / 2 + bin * hzPerBin;
+    }
+
+    function sendHoverControl(force = false) {
+      if (
+        !hoverState.inside ||
+        !hoverState.strong ||
+        !Number.isFinite(hoverState.freqHz) ||
+        ws.readyState !== WebSocket.OPEN
+      ) {
+        return;
+      }
+      const now = performance.now();
+      if (!force && now - lastHoverSendTs < 120) return;
+      ws.send(JSON.stringify({
+        type: "hover",
+        mode: "am",
+        freq_hz: Math.round(hoverState.freqHz),
+        strength: hoverState.strength,
+      }));
+      lastHoverSendTs = now;
+    }
+
+    canvas.addEventListener("mouseleave", () => {
+      hoverState.inside = false;
+      hideHoverTip();
+      hideWavePanel();
+    });
+    canvas.addEventListener("mousemove", (ev) => {
+      if (!lastRow || frameBins <= 0 || displayBins <= 0) {
+        hoverState.strong = false;
+        hideHoverTip();
+        hideWavePanel();
+        return;
+      }
+      const rect = canvas.getBoundingClientRect();
+      const xCss = ev.clientX - rect.left;
+      if (xCss < 0 || xCss >= rect.width) {
+        hoverState.strong = false;
+        hideHoverTip();
+        hideWavePanel();
+        return;
+      }
+      const xBinApprox = Math.floor((xCss / rect.width) * frameBins);
+      const pxToBins = frameBins / Math.max(1, displayBins);
+      const halfWindow = Math.max(2, Math.floor(pxToBins * 2.5));
+      const lo = Math.max(0, xBinApprox - halfWindow);
+      const hi = Math.min(frameBins - 1, xBinApprox + halfWindow);
+      let peakBin = lo;
+      let peakVal = lastRow[lo];
+      for (let i = lo + 1; i <= hi; i++) {
+        if (lastRow[i] > peakVal) {
+          peakVal = lastRow[i];
+          peakBin = i;
+        }
+      }
+      const range = Math.max(34, emaHigh - emaLow);
+      const strength = (peakVal - (emaLow + 6)) / range;
+      if (strength < 0.14) {
+        hoverState.strong = false;
+        hideHoverTip();
+        hideWavePanel();
+        return;
+      }
+      const freq = estimateFreqFromBin(peakBin);
+      if (!Number.isFinite(freq)) {
+        hoverState.strong = false;
+        hideHoverTip();
+        hideWavePanel();
+        return;
+      }
+      hoverState.inside = true;
+      hoverState.strong = true;
+      hoverState.lastMoveTs = performance.now();
+      hoverState.x = ev.clientX;
+      hoverState.y = ev.clientY;
+      hoverState.peakBin = peakBin;
+      hoverState.freqHz = freq;
+      hoverState.strength = strength;
+      showHoverTip(ev.clientX, ev.clientY, fmtHz(freq));
+      if (waveVisible) {
+        positionWavePanel(ev.clientX, ev.clientY);
+        drawWave(freq, strength);
+      }
+      sendHoverControl();
+    });
+
+    function hoverTick() {
+      if (hoverState.inside && hoverState.strong && lastRow && hoverState.peakBin >= 0 && hoverState.peakBin < lastRow.length) {
+        const range = Math.max(34, emaHigh - emaLow);
+        const strengthNow = (lastRow[hoverState.peakBin] - (emaLow + 6)) / range;
+        if (strengthNow < 0.12) {
+          hoverState.strong = false;
+          hideWavePanel();
+        } else {
+          hoverState.strength = strengthNow;
+        }
+      }
+      if (
+        hoverState.inside &&
+        hoverState.strong &&
+        performance.now() - hoverState.lastMoveTs >= 3000 &&
+        Number.isFinite(hoverState.freqHz)
+      ) {
+        showWavePanel(hoverState.x, hoverState.y, hoverState.freqHz, hoverState.strength);
+      }
+      requestAnimationFrame(hoverTick);
+    }
+    requestAnimationFrame(hoverTick);
+
     function parseFrame(buf) {
       const view = new DataView(buf);
       if (view.byteLength < HEADER) return null;
@@ -202,6 +461,12 @@ Next: ${fmtLocal(currentMeta.next_change_epoch_sec)}`;
           if (msg.type === "meta") {
             currentMeta = msg;
             renderMeta();
+          } else if (msg.type === "am_wave") {
+            latestAMWave = msg;
+            latestAMWaveTs = performance.now();
+            if (waveVisible && Number.isFinite(hoverState.freqHz)) {
+              drawWave(hoverState.freqHz, hoverState.strength);
+            }
           }
         } catch (_e) {}
         return;
@@ -210,6 +475,18 @@ Next: ${fmtLocal(currentMeta.next_change_epoch_sec)}`;
       if (!frame) return;
       drawRow(frame.row);
     };
+
+    // Clear stale AM wave if stream pauses.
+    setInterval(() => {
+      if (latestAMWave && performance.now() - latestAMWaveTs > 1200) {
+        latestAMWave = null;
+      }
+    }, 300);
+
+    // Keep hover control alive even when pointer is stationary.
+    setInterval(() => {
+      sendHoverControl(true);
+    }, 500);
   </script>
 </body>
 </html>

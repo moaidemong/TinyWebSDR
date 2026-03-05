@@ -19,6 +19,8 @@ from websockets import serve
 
 HEADER_FORMAT = "<I d H"
 HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
+AM_HEADER_FORMAT = "<I d I H"
+AM_HEADER_SIZE = struct.calcsize(AM_HEADER_FORMAT)
 DEFAULT_BINS = 8192
 
 
@@ -42,6 +44,26 @@ class ShmReader:
         self.shm.close()
 
 
+class AudioShmReader:
+    def __init__(self, name: str) -> None:
+        self.shm = shared_memory.SharedMemory(name=name, create=False)
+        resource_tracker.unregister(self.shm._name, "shared_memory")
+        self.buf = self.shm.buf
+
+    def read_chunk(self) -> tuple[int, int, list[float]] | None:
+        head = bytes(self.buf[:AM_HEADER_SIZE])
+        seq, _t_capture, freq_hz, n = struct.unpack(AM_HEADER_FORMAT, head)
+        if n <= 0 or n > 1024:
+            return None
+        payload = bytes(self.buf[AM_HEADER_SIZE : AM_HEADER_SIZE + (n * 2)])
+        samples_i16 = struct.unpack("<" + ("h" * n), payload)
+        samples = [max(-1.0, min(1.0, s / 32768.0)) for s in samples_i16]
+        return seq, freq_hz, samples
+
+    def close(self) -> None:
+        self.shm.close()
+
+
 def load_state(path: Path) -> dict | None:
     if not path.exists():
         return None
@@ -52,25 +74,60 @@ def load_state(path: Path) -> dict | None:
 
 
 async def run_server(
-    shm_name: str, host: str, port: int, send_fps: float, state_file: str, meta_interval: float
+    shm_name: str,
+    host: str,
+    port: int,
+    send_fps: float,
+    state_file: str,
+    meta_interval: float,
+    control_file: str,
 ) -> None:
     clients: set = set()
     reader: ShmReader | None = None
+    audio_reader: AudioShmReader | None = None
     interval = 1.0 / send_fps if send_fps > 0 else 0.005
     state_path = Path(state_file) if state_file else None
+    control_path = Path(control_file) if control_file else None
     active_shm = shm_name
     last_state_emit = 0.0
     last_state_sig = ""
+    last_audio_seq = -1
+    last_hover_write = 0.0
 
     async def handler(ws):
+        nonlocal last_hover_write
         clients.add(ws)
         try:
-            await ws.wait_closed()
+            async for raw in ws:
+                if not isinstance(raw, str):
+                    continue
+                try:
+                    msg = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                if msg.get("type") != "hover" or control_path is None:
+                    continue
+                now = time.time()
+                if now - last_hover_write < 0.08:
+                    continue
+                freq = float(msg.get("freq_hz", 0.0))
+                strength = float(msg.get("strength", 0.0))
+                payload = {
+                    "mode": "am",
+                    "hover_freq_hz": freq,
+                    "strength": strength,
+                    "updated_epoch_sec": now,
+                }
+                control_path.parent.mkdir(parents=True, exist_ok=True)
+                tmp = control_path.with_suffix(".tmp")
+                tmp.write_text(json.dumps(payload, ensure_ascii=True), encoding="utf-8")
+                tmp.replace(control_path)
+                last_hover_write = now
         finally:
             clients.discard(ws)
 
     async def broadcaster() -> None:
-        nonlocal reader, active_shm, last_state_emit, last_state_sig
+        nonlocal reader, audio_reader, active_shm, last_state_emit, last_state_sig, last_audio_seq
         last_seq = -1
         while True:
             now = time.time()
@@ -83,6 +140,9 @@ async def run_server(
                         if reader is not None:
                             reader.close()
                             reader = None
+                        if audio_reader is not None:
+                            audio_reader.close()
+                            audio_reader = None
                         active_shm = desired
                     if clients and (now - last_state_emit >= meta_interval):
                         msg = {
@@ -107,6 +167,11 @@ async def run_server(
                 except FileNotFoundError:
                     await asyncio.sleep(interval)
                     continue
+            if audio_reader is None:
+                try:
+                    audio_reader = AudioShmReader(f"{active_shm}_audio")
+                except FileNotFoundError:
+                    audio_reader = None
 
             frame = reader.read_frame()
             if frame is not None:
@@ -117,6 +182,22 @@ async def run_server(
                         return_exceptions=True,
                     )
                     last_seq = seq
+            if audio_reader is not None and clients:
+                chunk = audio_reader.read_chunk()
+                if chunk is not None:
+                    aseq, freq_hz, samples = chunk
+                    if aseq != last_audio_seq:
+                        payload = {
+                            "type": "am_wave",
+                            "freq_hz": freq_hz,
+                            "sample_rate_hz": 8000,
+                            "samples": samples,
+                        }
+                        await asyncio.gather(
+                            *(c.send(json.dumps(payload)) for c in tuple(clients)),
+                            return_exceptions=True,
+                        )
+                        last_audio_seq = aseq
             await asyncio.sleep(interval)
 
     try:
@@ -125,6 +206,8 @@ async def run_server(
     finally:
         if reader is not None:
             reader.close()
+        if audio_reader is not None:
+            audio_reader.close()
 
 
 def main() -> None:
@@ -135,6 +218,7 @@ def main() -> None:
     p.add_argument("--fps", type=float, default=120.0)
     p.add_argument("--state-file", default="runtime/band_state.json")
     p.add_argument("--meta-interval", type=float, default=1.0)
+    p.add_argument("--control-file", default="runtime/hover_control.json")
     args = p.parse_args()
     asyncio.run(
         run_server(
@@ -144,6 +228,7 @@ def main() -> None:
             args.fps,
             args.state_file,
             args.meta_interval,
+            args.control_file,
         )
     )
 
