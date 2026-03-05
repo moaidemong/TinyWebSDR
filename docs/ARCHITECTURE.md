@@ -51,6 +51,20 @@
   - `ws_server.py`
   - browser client
 
+## Development Environment
+- Primary development host: Windows 10.
+- Linux development runtime: WSL2 Ubuntu 22.04.
+- Python version: `3.8+` (recommended `3.10+`).
+- Required packages: `numpy`, `websockets`, `pyrtlsdr`.
+- Browser client is served locally via Python static server (`python -m http.server`).
+
+## Operation Environment (MVP)
+- Target runtime: WSL2 Ubuntu 22.04 on Windows 10 host.
+- SDR hardware: RTL-SDR v4 connected to host and accessible from WSL2.
+- Producer and gateway run in the same Linux runtime boundary for shared memory IPC.
+- Browser client runs on host browser and connects to gateway via WebSocket.
+- Single-node deployment only (no distributed bus, no multi-instance coordination).
+
 ## Failure and Backpressure Policy
 - Latest-only overwrite in shared memory; no deep queue in MVP.
 - If browser is slow, gateway drops stale rows and sends newest row only.
