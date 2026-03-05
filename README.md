@@ -11,15 +11,23 @@ A real-time shortwave waterfall visualization system using RTL-SDR v4, designed 
 
 ### Setup
 1. Clone repository: `git clone <repo-url>`
-2. Install Python dependencies: `pip install -r requirements.txt`
-3. Start stack (simulation mode): `.\run_mvp.ps1 -Source sim`
-4. Open browser client at `http://127.0.0.1:8080`
+2. Open WSL2 terminal and move to mounted path:
+   `cd /mnt/c/Workspace/Codex/TinyWebSDR`
+3. Install Python dependencies:
+   `python3 -m pip install -r requirements.txt`
+4. Normalize shell script line endings (once):
+   `sed -i 's/\r$//' run_mvp.sh`
+5. Run simulation stack:
+   `chmod +x run_mvp.sh && ./run_mvp.sh --source sim`
+6. Open browser client at `http://127.0.0.1:8080`
+
+### Windows PowerShell (Optional)
+- Run simulation stack: `.\run_mvp.ps1 -Source sim`
 
 ### RTL Device Mode
-1. Connect RTL-SDR v4 device
-2. Start producer: `python core_producer.py --source rtlsdr --center-freq 6800000 --sample-rate 2048000 --gain auto`
-3. Start gateway: `python ws_server.py`
-4. Serve client: `cd client && python -m http.server 8080`
+1. Connect RTL-SDR v4 device.
+2. In WSL2 mounted path (`/mnt/c/Workspace/Codex/TinyWebSDR`), run:
+   `./run_mvp.sh --source rtlsdr --center-freq 6800000 --sample-rate 2048000 --gain auto`
 
 ### Performance Targets (MVP)
 - End-to-end latency: ≤120ms (p95)
