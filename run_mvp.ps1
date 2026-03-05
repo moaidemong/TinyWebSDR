@@ -3,7 +3,8 @@ param(
   [string]$Source = "sim",
   [double]$CenterFreq = 6850000,
   [double]$SampleRate = 2400000,
-  [string]$Gain = "38.6"
+  [string]$Gain = "38.6",
+  [double]$Fps = 60
 )
 
 $ErrorActionPreference = "Stop"
@@ -14,7 +15,8 @@ $producerArgs = @(
   "--source", $Source,
   "--center-freq", $CenterFreq,
   "--sample-rate", $SampleRate,
-  "--gain", $Gain
+  "--gain", $Gain,
+  "--fps", $Fps
 )
 Start-Process -FilePath "python" -ArgumentList $producerArgs
 

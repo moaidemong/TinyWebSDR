@@ -5,6 +5,7 @@ SOURCE="sim"
 CENTER_FREQ="6850000"
 SAMPLE_RATE="2400000"
 GAIN="38.6"
+FPS="60"
 
 usage() {
   cat <<'EOF'
@@ -15,6 +16,7 @@ Options:
   --center-freq HZ         Center frequency in Hz (default: 6850000)
   --sample-rate HZ         Sample rate in Hz (default: 2400000)
   --gain VALUE             Gain value or "auto" (default: 38.6)
+  --fps VALUE              Producer FPS target (default: 60)
   -h, --help               Show this help
 EOF
 }
@@ -35,6 +37,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --gain)
       GAIN="${2:-}"
+      shift 2
+      ;;
+    --fps)
+      FPS="${2:-}"
       shift 2
       ;;
     -h|--help)
@@ -80,7 +86,8 @@ echo "Starting producer..."
   --source "$SOURCE" \
   --center-freq "$CENTER_FREQ" \
   --sample-rate "$SAMPLE_RATE" \
-  --gain "$GAIN" &
+  --gain "$GAIN" \
+  --fps "$FPS" &
 PRODUCER_PID=$!
 
 echo "Starting websocket gateway..."

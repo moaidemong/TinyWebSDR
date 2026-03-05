@@ -3,7 +3,7 @@
 
 MVP behavior:
 - Uses simulated IQ source by default (works without RTL hardware).
-- Computes 1024-bin FFT rows with Hann window, 50% overlap.
+- Computes 2048-bin FFT rows with Hann window, 50% overlap.
 - Writes latest row into shared memory as uint8 encoded dB values.
 """
 
@@ -191,7 +191,7 @@ def main() -> None:
     p = argparse.ArgumentParser(description="TinyWebSDR FFT producer")
     p.add_argument("--shm-name", default="tinywebsdr_latest")
     p.add_argument("--sample-rate", type=float, default=2_048_000.0)
-    p.add_argument("--fps", type=float, default=30.0)
+    p.add_argument("--fps", type=float, default=60.0)
     p.add_argument("--source", choices=["sim", "rtlsdr"], default="sim")
     p.add_argument("--center-freq", type=float, default=6_800_000.0)
     p.add_argument("--gain", default="auto")
