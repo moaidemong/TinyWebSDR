@@ -4,7 +4,7 @@ set -euo pipefail
 SOURCE="sim"
 CENTER_FREQ="6850000"
 SAMPLE_RATE="2400000"
-GAIN="auto"
+GAIN="38.6"
 
 usage() {
   cat <<'EOF'
@@ -14,7 +14,7 @@ Options:
   --source sim|rtlsdr      IQ source mode (default: sim)
   --center-freq HZ         Center frequency in Hz (default: 6850000)
   --sample-rate HZ         Sample rate in Hz (default: 2400000)
-  --gain VALUE             Gain value or "auto" (default: auto)
+  --gain VALUE             Gain value or "auto" (default: 38.6)
   -h, --help               Show this help
 EOF
 }

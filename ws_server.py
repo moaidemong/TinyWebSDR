@@ -16,7 +16,7 @@ from websockets import serve
 
 HEADER_FORMAT = "<I d H"
 HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
-DEFAULT_BINS = 1024
+DEFAULT_BINS = 2048
 
 
 class ShmReader:

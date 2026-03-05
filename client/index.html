@@ -13,14 +13,14 @@
   </style>
 </head>
 <body>
-  <canvas id="wf" width="1024" height="600"></canvas>
+  <canvas id="wf" width="2048" height="600"></canvas>
   <script>
-    const bins = 1024;
+    const bins = 2048;
     const HEADER = 14;
     const canvas = document.getElementById("wf");
     const ctx = canvas.getContext("2d");
-    let emaLow = 72;
-    let emaHigh = 238;
+    let emaLow = 66;
+    let emaHigh = 240;
 
     const rowImage = ctx.createImageData(bins, 1);
     const pal = new Uint8Array(256 * 3);
@@ -56,27 +56,27 @@
     buildClassicPalette();
 
     function estimateLevels(row) {
-      // 1024 bins sort cost is acceptable for MVP and gives stable percentiles.
+      // 2048 bins sort cost is acceptable for MVP and gives stable percentiles.
       const sorted = Array.from(row).sort((a, b) => a - b);
-      const p45 = sorted[Math.floor(sorted.length * 0.45)];
+      const p30 = sorted[Math.floor(sorted.length * 0.30)];
       const p998 = sorted[Math.floor(sorted.length * 0.998)];
-      return [p45, p998];
+      return [p30, p998];
     }
 
     function drawRow(row) {
       const [low, high] = estimateLevels(row);
       emaLow = emaLow * 0.96 + low * 0.04;
       emaHigh = emaHigh * 0.96 + high * 0.04;
-      const range = Math.max(28, emaHigh - emaLow);
+      const range = Math.max(34, emaHigh - emaLow);
 
       ctx.drawImage(canvas, 0, 0, canvas.width, canvas.height - 1, 0, 1, canvas.width, canvas.height - 1);
       const d = rowImage.data;
       for (let x = 0; x < bins; x++) {
-        const normalized = (row[x] - (emaLow + 10)) / range;
+        const normalized = (row[x] - (emaLow + 6)) / range;
         const mapped = Math.max(0, Math.min(1, normalized));
-        let tone = Math.pow(mapped, 2.2);
-        tone += Math.pow(mapped, 8.0) * 0.25;
-        if (tone < 0.04) tone = 0;
+        let tone = Math.pow(mapped, 1.65);
+        tone += Math.pow(mapped, 7.0) * 0.20;
+        if (tone < 0.008) tone = 0;
         const v = Math.round(Math.min(1, tone) * 255);
         const p = x * 4;
         d[p] = pal[v * 3];

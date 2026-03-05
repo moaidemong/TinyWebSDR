@@ -3,7 +3,7 @@ param(
   [string]$Source = "sim",
   [double]$CenterFreq = 6850000,
   [double]$SampleRate = 2400000,
-  [string]$Gain = "auto"
+  [string]$Gain = "38.6"
 )
 
 $ErrorActionPreference = "Stop"
