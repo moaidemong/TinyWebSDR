@@ -9,9 +9,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import struct
-from multiprocessing import shared_memory
+from multiprocessing import resource_tracker, shared_memory
 
-from websockets.server import serve
+from websockets import serve
 
 
 HEADER_FORMAT = "<I d H"
@@ -22,6 +22,9 @@ DEFAULT_BINS = 1024
 class ShmReader:
     def __init__(self, name: str) -> None:
         self.shm = shared_memory.SharedMemory(name=name, create=False)
+        # The gateway only attaches to an existing segment and must not unlink it.
+        # Unregister from resource_tracker to avoid cross-process unlink races.
+        resource_tracker.unregister(self.shm._name, "shared_memory")
         self.buf = self.shm.buf
 
     def read_frame(self) -> bytes | None:
@@ -39,7 +42,7 @@ class ShmReader:
 async def run_server(shm_name: str, host: str, port: int, send_fps: float) -> None:
     clients: set = set()
     reader: ShmReader | None = None
-    interval = 1.0 / send_fps if send_fps > 0 else 0.033
+    interval = 1.0 / send_fps if send_fps > 0 else 0.005
 
     async def handler(ws):
         clients.add(ws)
@@ -83,7 +86,7 @@ def main() -> None:
     p.add_argument("--shm-name", default="tinywebsdr_latest")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8765)
-    p.add_argument("--fps", type=float, default=30.0)
+    p.add_argument("--fps", type=float, default=120.0)
     args = p.parse_args()
     asyncio.run(run_server(args.shm_name, args.host, args.port, args.fps))
 

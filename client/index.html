@@ -3,6 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   <title>TinyWebSDR MVP</title>
   <style>
     :root { --bg: #0a0f12; --fg: #d7e3ea; --panel: #111a20; }
@@ -39,21 +42,64 @@
     let drops = 0;
     let frames = 0;
     let fpsTick = performance.now();
+    let latencyBaselineMs = null;
+    let emaLow = 60;
+    let emaHigh = 245;
 
     const rowImage = ctx.createImageData(bins, 1);
     const pal = new Uint8Array(256 * 3);
-    for (let i = 0; i < 256; i++) {
-      const t = i / 255;
-      pal[i * 3 + 0] = Math.min(255, Math.round(255 * Math.pow(t, 1.5)));
-      pal[i * 3 + 1] = Math.min(255, Math.round(255 * Math.pow(t, 0.7)));
-      pal[i * 3 + 2] = Math.min(255, Math.round(180 * (1 - Math.pow(1 - t, 2))));
+    function lerp(a, b, t) { return a + (b - a) * t; }
+    function buildClassicPalette() {
+      // SDR++-like classic palette: deep blue -> cyan -> yellow -> white.
+      const stops = [
+        [0.00, [0, 0, 10]],
+        [0.30, [0, 8, 70]],
+        [0.58, [0, 65, 205]],
+        [0.80, [35, 210, 255]],
+        [0.92, [255, 225, 90]],
+        [1.00, [255, 255, 255]],
+      ];
+      for (let i = 0; i < 256; i++) {
+        const t = i / 255;
+        let a = stops[0];
+        let b = stops[stops.length - 1];
+        for (let j = 0; j < stops.length - 1; j++) {
+          if (t >= stops[j][0] && t <= stops[j + 1][0]) {
+            a = stops[j];
+            b = stops[j + 1];
+            break;
+          }
+        }
+        const localT = (t - a[0]) / (b[0] - a[0] || 1);
+        pal[i * 3 + 0] = Math.round(lerp(a[1][0], b[1][0], localT));
+        pal[i * 3 + 1] = Math.round(lerp(a[1][1], b[1][1], localT));
+        pal[i * 3 + 2] = Math.round(lerp(a[1][2], b[1][2], localT));
+      }
+    }
+    buildClassicPalette();
+
+    function estimateLevels(row) {
+      // 1024 bins sort cost is acceptable for MVP and gives stable percentiles.
+      const sorted = Array.from(row).sort((a, b) => a - b);
+      const p35 = sorted[Math.floor(sorted.length * 0.35)];
+      const p995 = sorted[Math.floor(sorted.length * 0.995)];
+      return [p35, p995];
     }
 
     function drawRow(row) {
+      const [low, high] = estimateLevels(row);
+      emaLow = emaLow * 0.96 + low * 0.04;
+      emaHigh = emaHigh * 0.96 + high * 0.04;
+      const range = Math.max(35, emaHigh - emaLow);
+
       ctx.drawImage(canvas, 0, 0, canvas.width, canvas.height - 1, 0, 1, canvas.width, canvas.height - 1);
       const d = rowImage.data;
       for (let x = 0; x < bins; x++) {
-        const v = row[x];
+        const normalized = (row[x] - (emaLow + 6)) / range;
+        const mapped = Math.max(0, Math.min(1, normalized));
+        let contrast = Math.pow(mapped, 1.7);
+        if (contrast < 0.08) contrast = 0;
+        const v = Math.round(contrast * 255);
         const p = x * 4;
         d[p] = pal[v * 3];
         d[p + 1] = pal[v * 3 + 1];
@@ -101,8 +147,16 @@
       if (lastSeq !== null && frame.seq > lastSeq + 1) drops += frame.seq - lastSeq - 1;
       lastSeq = frame.seq;
       drawRow(frame.row);
-      const latencyMs = Math.max(0, (performance.now() / 1000 - frame.tCapture) * 1000);
-      latencyEl.textContent = `latency: ${latencyMs.toFixed(1)}ms`;
+      const rawLatencyMs = (Date.now() / 1000 - frame.tCapture) * 1000;
+      if (latencyBaselineMs === null) {
+        latencyBaselineMs = rawLatencyMs;
+      } else {
+        // Track clock offset/drift slowly while keeping latency spikes visible.
+        const alpha = rawLatencyMs < latencyBaselineMs ? 0.10 : 0.003;
+        latencyBaselineMs = latencyBaselineMs * (1 - alpha) + rawLatencyMs * alpha;
+      }
+      const calibratedLatencyMs = Math.max(0, rawLatencyMs - latencyBaselineMs);
+      latencyEl.textContent = `latency: ${calibratedLatencyMs.toFixed(2)}ms`;
       frames++;
       tickFps();
     };

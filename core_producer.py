@@ -19,7 +19,7 @@ from multiprocessing import shared_memory
 import numpy as np
 
 
-HEADER_FORMAT = "<I d H"  # seq, monotonic capture time, bins
+HEADER_FORMAT = "<I d H"  # seq, capture epoch seconds, bins
 HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
 DEFAULT_BINS = 1024
 DB_MIN = -110.0
@@ -53,8 +53,26 @@ class RtlSdrIQSource(IQSource):
             raise RuntimeError(
                 "pyrtlsdr is not installed. Run: pip install pyrtlsdr"
             ) from exc
+        except Exception as exc:
+            msg = str(exc)
+            if "rtlsdr_set_dithering" in msg:
+                raise RuntimeError(
+                    "librtlsdr/pyrtlsdr version mismatch: missing symbol "
+                    "'rtlsdr_set_dithering'. Update system librtlsdr or install "
+                    "a compatible pyrtlsdr version."
+                ) from exc
+            raise
 
-        self.sdr = RtlSdr()
+        try:
+            self.sdr = RtlSdr()
+        except Exception as exc:
+            msg = str(exc)
+            if "rtlsdr_set_dithering" in msg:
+                raise RuntimeError(
+                    "Failed to initialize RTL-SDR: missing symbol "
+                    "'rtlsdr_set_dithering' in system librtlsdr."
+                ) from exc
+            raise
         self.sdr.sample_rate = sample_rate
         self.sdr.center_freq = center_freq
         if gain.lower() == "auto":
@@ -111,13 +129,16 @@ def run(
     source_kind: str,
     center_freq: float,
     gain: str,
+    db_offset: float,
 ) -> None:
     bins = DEFAULT_BINS
     hop = bins // 2
     win = np.hanning(bins).astype(np.float32)
     shm_size = HEADER_SIZE + bins
-    shm = open_shared_memory(shm_name, shm_size)
+    source: IQSource | None = None
+    shm: shared_memory.SharedMemory | None = None
     source = build_source(source_kind, sample_rate, center_freq, gain)
+    shm = open_shared_memory(shm_name, shm_size)
     buf = shm.buf
     stop = False
 
@@ -140,11 +161,11 @@ def run(
             carry = block[hop:]
 
             spec = np.fft.fftshift(np.fft.fft(block * win, n=bins))
-            power = np.abs(spec) ** 2 + 1e-12
-            db = 10.0 * np.log10(power)
+            mag = np.abs(spec) / bins
+            db = 20.0 * np.log10(mag + 1e-12) + db_offset
             row_u8 = encode_db_to_u8(db)
 
-            payload = struct.pack(HEADER_FORMAT, seq, time.monotonic(), bins)
+            payload = struct.pack(HEADER_FORMAT, seq, time.time(), bins)
             buf[:HEADER_SIZE] = payload
             buf[HEADER_SIZE : HEADER_SIZE + bins] = row_u8.tobytes()
             seq += 1
@@ -155,9 +176,15 @@ def run(
                 if sleep_s > 0:
                     time.sleep(sleep_s)
     finally:
-        source.close()
-        shm.close()
-        shm.unlink()
+        if source is not None:
+            source.close()
+        if shm is not None:
+            shm.close()
+            try:
+                shm.unlink()
+            except FileNotFoundError:
+                # Another process (or previous cleanup) may have already removed it.
+                pass
 
 
 def main() -> None:
@@ -168,6 +195,7 @@ def main() -> None:
     p.add_argument("--source", choices=["sim", "rtlsdr"], default="sim")
     p.add_argument("--center-freq", type=float, default=6_800_000.0)
     p.add_argument("--gain", default="auto")
+    p.add_argument("--db-offset", type=float, default=-35.0)
     args = p.parse_args()
     run(
         args.shm_name,
@@ -176,6 +204,7 @@ def main() -> None:
         args.source,
         args.center_freq,
         args.gain,
+        args.db_offset,
     )
 
 

@@ -45,6 +45,22 @@ Run in **Windows PowerShell (Administrator)**.
 2. In WSL2 mounted path (`/mnt/c/Workspace/Codex/TinyWebSDR`), run:
    `./run_mvp.sh --source rtlsdr --center-freq 6800000 --sample-rate 2048000 --gain auto`
 
+### RTL Troubleshooting (WSL2)
+If logs repeatedly show `[R82XX] PLL not locked!`:
+
+1. Test with safer parameters first:
+   `./run_mvp.sh --source rtlsdr --center-freq 100000000 --sample-rate 1024000 --gain 20`
+2. Verify device health:
+   - `rtl_test -t`
+   - `rtl_test -s 2048000`
+3. Ensure the device is attached to WSL:
+   - `usbipd list`
+   - `usbipd attach --wsl --busid <BUSID>`
+4. If PLL warnings persist, update WSL-side `librtlsdr`/driver stack to a version compatible with RTL-SDR Blog V4.
+5. If startup fails with missing symbol `rtlsdr_set_dithering`, reinstall dependencies:
+   - `pip install -r requirements.txt`
+   - This project pins `pyrtlsdr` to a compatible range for Ubuntu 22.04.
+
 ### Performance Targets (MVP)
 - End-to-end latency: ≤120ms (p95)
 - Render rate: ≥20 FPS sustained  
