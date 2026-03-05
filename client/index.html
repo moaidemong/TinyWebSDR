@@ -8,41 +8,17 @@
   <meta http-equiv="Expires" content="0">
   <title>TinyWebSDR MVP</title>
   <style>
-    :root { --bg: #0a0f12; --fg: #d7e3ea; --panel: #111a20; }
-    html, body { margin: 0; height: 100%; background: radial-gradient(circle at 20% 10%, #1a2a33, #0a0f12 60%); color: var(--fg); font-family: "Segoe UI", sans-serif; }
-    .wrap { display: grid; grid-template-rows: auto 1fr; height: 100%; }
-    .bar { padding: 10px 14px; background: color-mix(in srgb, var(--panel) 90%, black); border-bottom: 1px solid #253640; display: flex; gap: 18px; align-items: center; font-size: 14px; }
+    html, body { margin: 0; height: 100%; background: #00040f; overflow: hidden; }
     canvas { width: 100%; height: 100%; image-rendering: pixelated; display: block; }
-    .ok { color: #6fe39d; }
-    .warn { color: #ffb26b; }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="bar">
-      <strong>TinyWebSDR</strong>
-      <span id="status" class="warn">connecting</span>
-      <span id="fps">fps: -</span>
-      <span id="drop">drops: -</span>
-      <span id="latency">latency: -</span>
-    </div>
-    <canvas id="wf" width="1024" height="600"></canvas>
-  </div>
+  <canvas id="wf" width="1024" height="600"></canvas>
   <script>
     const bins = 1024;
     const HEADER = 14;
     const canvas = document.getElementById("wf");
     const ctx = canvas.getContext("2d");
-    const statusEl = document.getElementById("status");
-    const fpsEl = document.getElementById("fps");
-    const dropEl = document.getElementById("drop");
-    const latencyEl = document.getElementById("latency");
-
-    let lastSeq = null;
-    let drops = 0;
-    let frames = 0;
-    let fpsTick = performance.now();
-    let latencyBaselineMs = null;
     let emaLow = 60;
     let emaHigh = 245;
 
@@ -121,44 +97,14 @@
       return { seq, tCapture, row };
     }
 
-    function tickFps() {
-      const now = performance.now();
-      if (now - fpsTick >= 1000) {
-        fpsEl.textContent = `fps: ${frames}`;
-        dropEl.textContent = `drops: ${drops}`;
-        frames = 0;
-        fpsTick = now;
-      }
-    }
-
     const ws = new WebSocket(`ws://${location.hostname || "127.0.0.1"}:8765`);
     ws.binaryType = "arraybuffer";
-    ws.onopen = () => {
-      statusEl.textContent = "connected";
-      statusEl.className = "ok";
-    };
-    ws.onclose = () => {
-      statusEl.textContent = "closed";
-      statusEl.className = "warn";
-    };
+    ws.onopen = () => {};
+    ws.onclose = () => {};
     ws.onmessage = (ev) => {
       const frame = parseFrame(ev.data);
       if (!frame) return;
-      if (lastSeq !== null && frame.seq > lastSeq + 1) drops += frame.seq - lastSeq - 1;
-      lastSeq = frame.seq;
       drawRow(frame.row);
-      const rawLatencyMs = (Date.now() / 1000 - frame.tCapture) * 1000;
-      if (latencyBaselineMs === null) {
-        latencyBaselineMs = rawLatencyMs;
-      } else {
-        // Track clock offset/drift slowly while keeping latency spikes visible.
-        const alpha = rawLatencyMs < latencyBaselineMs ? 0.10 : 0.003;
-        latencyBaselineMs = latencyBaselineMs * (1 - alpha) + rawLatencyMs * alpha;
-      }
-      const calibratedLatencyMs = Math.max(0, rawLatencyMs - latencyBaselineMs);
-      latencyEl.textContent = `latency: ${calibratedLatencyMs.toFixed(2)}ms`;
-      frames++;
-      tickFps();
     };
   </script>
 </body>
