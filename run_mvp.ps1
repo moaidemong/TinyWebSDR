@@ -1,8 +1,8 @@
 param(
   [ValidateSet("sim", "rtlsdr")]
   [string]$Source = "sim",
-  [double]$CenterFreq = 6800000,
-  [double]$SampleRate = 2048000,
+  [double]$CenterFreq = 6850000,
+  [double]$SampleRate = 2400000,
   [string]$Gain = "auto"
 )
 

@@ -43,7 +43,8 @@ Run in **Windows PowerShell (Administrator)**.
 ### RTL Device Mode
 1. Connect RTL-SDR v4 device.
 2. In WSL2 mounted path (`/mnt/c/Workspace/Codex/TinyWebSDR`), run:
-   `./run_mvp.sh --source rtlsdr --center-freq 6800000 --sample-rate 2048000 --gain auto`
+   `./run_mvp.sh --source rtlsdr --center-freq 6850000 --sample-rate 2400000 --gain auto`
+3. This setting shows about `5.65 MHz ~ 8.05 MHz` (`center ± sample_rate/2`), close to the SDR++ screenshot span.
 
 ### RTL Troubleshooting (WSL2)
 If logs repeatedly show `[R82XX] PLL not locked!`:
