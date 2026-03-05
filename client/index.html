@@ -10,20 +10,57 @@
   <style>
     html, body { margin: 0; height: 100%; background: #00040f; overflow: hidden; }
     canvas { width: 100%; height: 100%; image-rendering: pixelated; display: block; }
+    .meta {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      z-index: 20;
+      color: #b8d8ff;
+      background: rgba(4, 10, 26, 0.78);
+      border: 1px solid rgba(120, 160, 220, 0.35);
+      border-radius: 6px;
+      padding: 6px 9px;
+      font: 12px/1.4 Consolas, "Courier New", monospace;
+      white-space: pre-line;
+    }
+    .meta-toggle {
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      z-index: 21;
+      border: 1px solid rgba(120, 160, 220, 0.4);
+      background: rgba(8, 12, 20, 0.8);
+      color: #dceaff;
+      border-radius: 6px;
+      padding: 6px 8px;
+      font: 12px/1 Consolas, "Courier New", monospace;
+      cursor: pointer;
+    }
   </style>
 </head>
 <body>
   <canvas id="wf" width="1920" height="900"></canvas>
+  <div id="meta" class="meta" hidden></div>
+  <button id="metaToggle" class="meta-toggle" type="button">Meta Off</button>
   <script>
     const HEADER = 14;
     const canvas = document.getElementById("wf");
     const ctx = canvas.getContext("2d");
+    const metaEl = document.getElementById("meta");
+    const metaToggleEl = document.getElementById("metaToggle");
     let emaLow = 66;
     let emaHigh = 240;
     let frameBins = 0;
     let displayBins = 0;
 
     let rowImage = ctx.createImageData(1024, 1);
+    let metaVisible = localStorage.getItem("tinywebsdr_meta_visible") === "1";
+    let currentMeta = {
+      band_name: "-",
+      center_freq_hz: null,
+      sample_rate_hz: null,
+      next_change_epoch_sec: null,
+    };
     const pal = new Uint8Array(256 * 3);
     function lerp(a, b, t) { return a + (b - a) * t; }
     function buildClassicPalette() {
@@ -65,6 +102,37 @@
 
     resizeCanvas();
     window.addEventListener("resize", resizeCanvas);
+
+    function fmtMHz(v) {
+      if (!v || !Number.isFinite(v)) return "-";
+      return (v / 1_000_000).toFixed(3) + " MHz";
+    }
+
+    function fmtLocal(v) {
+      if (!v || !Number.isFinite(v)) return "-";
+      return new Date(v * 1000).toLocaleString();
+    }
+
+    function renderMeta() {
+      metaEl.textContent =
+`Band: ${currentMeta.band_name || "-"}
+Center: ${fmtMHz(currentMeta.center_freq_hz)}
+Span: ${fmtMHz(currentMeta.sample_rate_hz)}
+Next: ${fmtLocal(currentMeta.next_change_epoch_sec)}`;
+      metaEl.hidden = !metaVisible;
+      metaToggleEl.textContent = metaVisible ? "Meta On" : "Meta Off";
+    }
+
+    metaToggleEl.addEventListener("click", () => {
+      metaVisible = !metaVisible;
+      localStorage.setItem("tinywebsdr_meta_visible", metaVisible ? "1" : "0");
+      renderMeta();
+    });
+
+    window.addEventListener("keydown", (ev) => {
+      if (ev.key.toLowerCase() === "m") metaToggleEl.click();
+    });
+    renderMeta();
 
     function estimateLevels(row) {
       // Use sampled bins for percentile estimation to keep cost bounded at high FFT sizes.
@@ -128,6 +196,16 @@
     ws.onopen = () => {};
     ws.onclose = () => {};
     ws.onmessage = (ev) => {
+      if (typeof ev.data === "string") {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg.type === "meta") {
+            currentMeta = msg;
+            renderMeta();
+          }
+        } catch (_e) {}
+        return;
+      }
       const frame = parseFrame(ev.data);
       if (!frame) return;
       drawRow(frame.row);

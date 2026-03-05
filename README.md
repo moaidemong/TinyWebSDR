@@ -49,6 +49,20 @@ Run in **Windows PowerShell (Administrator)**.
 5. Default producer frame rate is `60 FPS`. You can override with `--fps` (e.g. `--fps 75`).
 6. If CPU usage is high, reduce FPS (e.g. `--fps 45`) while keeping `8192` bins.
 
+### 24h Title Stream Mode
+- Run scheduler + gateway + client together:
+  - WSL/Linux: `./run_title_stream.sh`
+  - PowerShell: `.\run_title_stream.ps1`
+- Default KST schedule:
+  - Night: SW band (`6.85 MHz center`, `2.4 MHz span`)
+  - Morning: `9~11 MHz` band (`10.0 MHz center`, `2.0 MHz span`)
+  - Afternoon: `13~15 MHz` band (`14.0 MHz center`, `2.0 MHz span`)
+- Metadata overlay can be toggled in browser:
+  - Click `Meta On/Off` button
+  - Or press `M` key
+
+See [docs/OPERATIONS.md](docs/OPERATIONS.md) for `systemd` service setup.
+
 ### RTL Troubleshooting (WSL2)
 If logs repeatedly show `[R82XX] PLL not locked!`:
 
