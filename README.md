@@ -35,10 +35,10 @@ Run in **Windows PowerShell (Administrator)**.
    - Find your RTL-SDR device and copy its BUSID (example: `1-1`).
 3. Re-attach to WSL2 using BUSID placeholder:
    - `usbipd detach --busid <BUSID>`
-   - `usbipd attach --wsl --busid <BUSID>`
+   - `usbipd attach --wsl <DISTRO> --busid <BUSID>`
 4. Example with fixed BUSID:
    - `usbipd detach --busid 1-1`
-   - `usbipd attach --wsl --busid 1-1`
+   - `usbipd attach --wsl Ubuntu-22.04 --busid 1-1`
 
 ### RTL Device Mode
 1. Connect RTL-SDR v4 device.
@@ -55,7 +55,7 @@ If logs repeatedly show `[R82XX] PLL not locked!`:
    - `rtl_test -s 2048000`
 3. Ensure the device is attached to WSL:
    - `usbipd list`
-   - `usbipd attach --wsl --busid <BUSID>`
+   - `usbipd attach --wsl <DISTRO> --busid <BUSID>`
 4. If PLL warnings persist, update WSL-side `librtlsdr`/driver stack to a version compatible with RTL-SDR Blog V4.
 5. If startup fails with missing symbol `rtlsdr_set_dithering`, reinstall dependencies:
    - `pip install -r requirements.txt`
