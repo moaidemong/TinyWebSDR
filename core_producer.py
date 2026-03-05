@@ -3,7 +3,7 @@
 
 MVP behavior:
 - Uses simulated IQ source by default (works without RTL hardware).
-- Computes 2048-bin FFT rows with Hann window, 50% overlap.
+- Computes 8192-bin FFT rows with Nuttall window, 50% overlap.
 - Writes latest row into shared memory as uint8 encoded dB values.
 """
 
@@ -21,7 +21,7 @@ import numpy as np
 
 HEADER_FORMAT = "<I d H"  # seq, capture epoch seconds, bins
 HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
-DEFAULT_BINS = 2048
+DEFAULT_BINS = 8192
 DB_MIN = -110.0
 DB_MAX = -20.0
 
@@ -102,6 +102,18 @@ def synth_iq(n: int, sample_rate: float, t0: float) -> np.ndarray:
     return (tone1 + tone2 + noise).astype(np.complex64)
 
 
+def nuttall_window(n: int) -> np.ndarray:
+    # 4-term Nuttall window improves sidelobe suppression for thin-line rendering.
+    i = np.arange(n, dtype=np.float64)
+    a0 = 0.355768
+    a1 = 0.487396
+    a2 = 0.144232
+    a3 = 0.012604
+    phase = 2.0 * math.pi * i / (n - 1)
+    w = a0 - a1 * np.cos(phase) + a2 * np.cos(2.0 * phase) - a3 * np.cos(3.0 * phase)
+    return w.astype(np.float32)
+
+
 def open_shared_memory(name: str, size: int) -> shared_memory.SharedMemory:
     try:
         return shared_memory.SharedMemory(name=name, create=True, size=size)
@@ -133,7 +145,7 @@ def run(
 ) -> None:
     bins = DEFAULT_BINS
     hop = bins // 2
-    win = np.hanning(bins).astype(np.float32)
+    win = nuttall_window(bins)
     shm_size = HEADER_SIZE + bins
     source: IQSource | None = None
     shm: shared_memory.SharedMemory | None = None

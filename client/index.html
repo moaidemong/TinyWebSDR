@@ -13,16 +13,17 @@
   </style>
 </head>
 <body>
-  <canvas id="wf" width="2048" height="600"></canvas>
+  <canvas id="wf" width="1920" height="900"></canvas>
   <script>
-    const bins = 2048;
     const HEADER = 14;
     const canvas = document.getElementById("wf");
     const ctx = canvas.getContext("2d");
     let emaLow = 66;
     let emaHigh = 240;
+    let frameBins = 0;
+    let displayBins = 0;
 
-    const rowImage = ctx.createImageData(bins, 1);
+    let rowImage = ctx.createImageData(1024, 1);
     const pal = new Uint8Array(256 * 3);
     function lerp(a, b, t) { return a + (b - a) * t; }
     function buildClassicPalette() {
@@ -55,15 +56,37 @@
     }
     buildClassicPalette();
 
+    function resizeCanvas() {
+      canvas.width = Math.max(1024, window.innerWidth);
+      canvas.height = Math.max(500, window.innerHeight);
+      displayBins = canvas.width;
+      rowImage = ctx.createImageData(displayBins, 1);
+    }
+
+    resizeCanvas();
+    window.addEventListener("resize", resizeCanvas);
+
     function estimateLevels(row) {
-      // 2048 bins sort cost is acceptable for MVP and gives stable percentiles.
-      const sorted = Array.from(row).sort((a, b) => a - b);
+      // Use sampled bins for percentile estimation to keep cost bounded at high FFT sizes.
+      const stride = Math.max(1, Math.floor(row.length / 2048));
+      const sampled = [];
+      for (let i = 0; i < row.length; i += stride) sampled.push(row[i]);
+      const sorted = sampled.sort((a, b) => a - b);
       const p30 = sorted[Math.floor(sorted.length * 0.30)];
       const p998 = sorted[Math.floor(sorted.length * 0.998)];
       return [p30, p998];
     }
 
+    function bucketPeak(row, x, outBins) {
+      const start = Math.floor(x * row.length / outBins);
+      const end = Math.max(start + 1, Math.floor((x + 1) * row.length / outBins));
+      let m = 0;
+      for (let i = start; i < end; i++) if (row[i] > m) m = row[i];
+      return m;
+    }
+
     function drawRow(row) {
+      if (frameBins !== row.length) frameBins = row.length;
       const [low, high] = estimateLevels(row);
       emaLow = emaLow * 0.96 + low * 0.04;
       emaHigh = emaHigh * 0.96 + high * 0.04;
@@ -71,8 +94,9 @@
 
       ctx.drawImage(canvas, 0, 0, canvas.width, canvas.height - 1, 0, 1, canvas.width, canvas.height - 1);
       const d = rowImage.data;
-      for (let x = 0; x < bins; x++) {
-        const normalized = (row[x] - (emaLow + 6)) / range;
+      for (let x = 0; x < displayBins; x++) {
+        const src = bucketPeak(row, x, displayBins);
+        const normalized = (src - (emaLow + 6)) / range;
         const mapped = Math.max(0, Math.min(1, normalized));
         let tone = Math.pow(mapped, 1.65);
         tone += Math.pow(mapped, 7.0) * 0.20;
@@ -93,7 +117,7 @@
       const seq = view.getUint32(0, true);
       const tCapture = view.getFloat64(4, true);
       const n = view.getUint16(12, true);
-      if (n !== bins) return null;
+      if (n <= 0) return null;
       if (view.byteLength !== HEADER + n) return null;
       const row = new Uint8Array(buf, HEADER, n);
       return { seq, tCapture, row };
