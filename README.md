@@ -24,6 +24,22 @@ A real-time shortwave waterfall visualization system using RTL-SDR v4, designed 
 ### Windows PowerShell (Optional)
 - Run simulation stack: `.\run_mvp.ps1 -Source sim`
 
+### Windows USB Pass-through to WSL2 (RTL-SDR)
+Run in **Windows PowerShell (Administrator)**.
+
+1. Install utility (`usbipd-win`) if missing:
+   - `winget install --exact dorssel.usbipd-win`
+   - or install latest MSI from: `https://github.com/dorssel/usbipd-win/releases`
+2. Check BUSID:
+   - `usbipd list`
+   - Find your RTL-SDR device and copy its BUSID (example: `1-1`).
+3. Re-attach to WSL2 using BUSID placeholder:
+   - `usbipd detach --busid <BUSID>`
+   - `usbipd attach --wsl --busid <BUSID>`
+4. Example with fixed BUSID:
+   - `usbipd detach --busid 1-1`
+   - `usbipd attach --wsl --busid 1-1`
+
 ### RTL Device Mode
 1. Connect RTL-SDR v4 device.
 2. In WSL2 mounted path (`/mnt/c/Workspace/Codex/TinyWebSDR`), run:
