@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TinyWebSDR MVP</title>
+  <style>
+    :root { --bg: #0a0f12; --fg: #d7e3ea; --panel: #111a20; }
+    html, body { margin: 0; height: 100%; background: radial-gradient(circle at 20% 10%, #1a2a33, #0a0f12 60%); color: var(--fg); font-family: "Segoe UI", sans-serif; }
+    .wrap { display: grid; grid-template-rows: auto 1fr; height: 100%; }
+    .bar { padding: 10px 14px; background: color-mix(in srgb, var(--panel) 90%, black); border-bottom: 1px solid #253640; display: flex; gap: 18px; align-items: center; font-size: 14px; }
+    canvas { width: 100%; height: 100%; image-rendering: pixelated; display: block; }
+    .ok { color: #6fe39d; }
+    .warn { color: #ffb26b; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="bar">
+      <strong>TinyWebSDR</strong>
+      <span id="status" class="warn">connecting</span>
+      <span id="fps">fps: -</span>
+      <span id="drop">drops: -</span>
+      <span id="latency">latency: -</span>
+    </div>
+    <canvas id="wf" width="1024" height="600"></canvas>
+  </div>
+  <script>
+    const bins = 1024;
+    const HEADER = 14;
+    const canvas = document.getElementById("wf");
+    const ctx = canvas.getContext("2d");
+    const statusEl = document.getElementById("status");
+    const fpsEl = document.getElementById("fps");
+    const dropEl = document.getElementById("drop");
+    const latencyEl = document.getElementById("latency");
+
+    let lastSeq = null;
+    let drops = 0;
+    let frames = 0;
+    let fpsTick = performance.now();
+
+    const rowImage = ctx.createImageData(bins, 1);
+    const pal = new Uint8Array(256 * 3);
+    for (let i = 0; i < 256; i++) {
+      const t = i / 255;
+      pal[i * 3 + 0] = Math.min(255, Math.round(255 * Math.pow(t, 1.5)));
+      pal[i * 3 + 1] = Math.min(255, Math.round(255 * Math.pow(t, 0.7)));
+      pal[i * 3 + 2] = Math.min(255, Math.round(180 * (1 - Math.pow(1 - t, 2))));
+    }
+
+    function drawRow(row) {
+      ctx.drawImage(canvas, 0, 0, canvas.width, canvas.height - 1, 0, 1, canvas.width, canvas.height - 1);
+      const d = rowImage.data;
+      for (let x = 0; x < bins; x++) {
+        const v = row[x];
+        const p = x * 4;
+        d[p] = pal[v * 3];
+        d[p + 1] = pal[v * 3 + 1];
+        d[p + 2] = pal[v * 3 + 2];
+        d[p + 3] = 255;
+      }
+      ctx.putImageData(rowImage, 0, 0);
+    }
+
+    function parseFrame(buf) {
+      const view = new DataView(buf);
+      if (view.byteLength < HEADER) return null;
+      const seq = view.getUint32(0, true);
+      const tCapture = view.getFloat64(4, true);
+      const n = view.getUint16(12, true);
+      if (n !== bins) return null;
+      if (view.byteLength !== HEADER + n) return null;
+      const row = new Uint8Array(buf, HEADER, n);
+      return { seq, tCapture, row };
+    }
+
+    function tickFps() {
+      const now = performance.now();
+      if (now - fpsTick >= 1000) {
+        fpsEl.textContent = `fps: ${frames}`;
+        dropEl.textContent = `drops: ${drops}`;
+        frames = 0;
+        fpsTick = now;
+      }
+    }
+
+    const ws = new WebSocket(`ws://${location.hostname || "127.0.0.1"}:8765`);
+    ws.binaryType = "arraybuffer";
+    ws.onopen = () => {
+      statusEl.textContent = "connected";
+      statusEl.className = "ok";
+    };
+    ws.onclose = () => {
+      statusEl.textContent = "closed";
+      statusEl.className = "warn";
+    };
+    ws.onmessage = (ev) => {
+      const frame = parseFrame(ev.data);
+      if (!frame) return;
+      if (lastSeq !== null && frame.seq > lastSeq + 1) drops += frame.seq - lastSeq - 1;
+      lastSeq = frame.seq;
+      drawRow(frame.row);
+      const latencyMs = Math.max(0, (performance.now() / 1000 - frame.tCapture) * 1000);
+      latencyEl.textContent = `latency: ${latencyMs.toFixed(1)}ms`;
+      frames++;
+      tickFps();
+    };
+  </script>
+</body>
+</html>

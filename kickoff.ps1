@@ -7,9 +7,42 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Test-Command {
+  param([string]$Name)
+  return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
+}
+
+function Ensure-OriginRemote {
+  param(
+    [string]$RepoUrl
+  )
+
+  $originUrl = git remote get-url origin 2>$null
+  if ($LASTEXITCODE -eq 0 -and $originUrl) {
+    if ($originUrl -ne $RepoUrl) {
+      git remote set-url origin $RepoUrl
+      Write-Host "Updated origin -> $RepoUrl"
+    } else {
+      Write-Host "origin already set -> $RepoUrl"
+    }
+  } else {
+    git remote add origin $RepoUrl
+    Write-Host "Added origin -> $RepoUrl"
+  }
+}
+
 # 0) prerequisite check
+if (!(Test-Command "git")) {
+  throw "git is not installed or not in PATH."
+}
 git --version | Out-Null
-gh --version | Out-Null
+
+$hasGh = Test-Command "gh"
+if ($hasGh) {
+  gh --version | Out-Null
+} else {
+  Write-Host "gh is not installed. Will use manual repo flow."
+}
 
 # 1) repo root
 if (!(Test-Path ".git")) {
@@ -78,14 +111,72 @@ if (!(Test-Path "README.md")) {
 }
 
 # 3) first commit
-git add .
-git commit -m "chore: project kickoff (docs + conventions)"
-if ($LASTEXITCODE -ne 0) {
-  Write-Host "No changes to commit."
+if (-not (git config --global user.name)) {
+  throw 'git user.name is missing. Run: git config --global user.name "Your Name"'
+}
+if (-not (git config --global user.email)) {
+  throw 'git user.email is missing. Run: git config --global user.email "you@example.com"'
 }
 
-# 4) create/push GitHub repo
+git add .
+
+git diff --cached --quiet
+if ($LASTEXITCODE -eq 0) {
+  Write-Host "No staged changes to commit."
+} elseif ($LASTEXITCODE -eq 1) {
+  $commitOutput = git commit -m "chore: project kickoff (docs + conventions)" 2>&1
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host $commitOutput
+    throw "Commit failed."
+  }
+  Write-Host $commitOutput
+} else {
+  throw "git diff --cached --quiet failed."
+}
+
+# 4) create/push GitHub repo (with fallback)
 $repo = "$GithubOwner/$ProjectName"
-gh repo create $repo --$Visibility --source . --remote origin --push
+$repoUrl = "https://github.com/$repo.git"
+
+if ($hasGh) {
+  gh auth status *> $null
+  if ($LASTEXITCODE -ne 0) {
+    throw "gh is installed but not authenticated. Run: gh auth login"
+  }
+
+  gh repo view $repo *> $null
+  if ($LASTEXITCODE -ne 0) {
+    $createOutput = gh repo create $repo --$Visibility 2>&1
+    if ($LASTEXITCODE -ne 0) {
+      Write-Host $createOutput
+      throw "Failed to create GitHub repository via gh."
+    }
+    Write-Host "Created GitHub repo: https://github.com/$repo"
+  } else {
+    Write-Host "GitHub repo already exists: https://github.com/$repo"
+  }
+} else {
+  Write-Host ""
+  Write-Host "Create GitHub repo manually (if not already created):"
+  Write-Host "https://github.com/new"
+  Write-Host "- Owner: $GithubOwner"
+  Write-Host "- Repository name: $ProjectName"
+  Write-Host "- Visibility: $Visibility"
+}
+
+Ensure-OriginRemote -RepoUrl $repoUrl
+
+$pushOutput = git push -u origin main 2>&1
+if ($LASTEXITCODE -ne 0) {
+  Write-Host $pushOutput
+  if ($pushOutput -match "Repository not found") {
+    throw "Remote repository not found. Check owner/repo name and access permissions."
+  }
+  if ($pushOutput -match "Could not read from remote repository") {
+    throw "No access to remote repository. Check authentication and repository permissions."
+  }
+  throw "git push failed."
+}
+Write-Host $pushOutput
 
 Write-Host "Kickoff complete: https://github.com/$repo"
