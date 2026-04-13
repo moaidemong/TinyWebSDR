@@ -70,7 +70,18 @@
       font: 11px/1.45 "Segoe UI", sans-serif;
       text-align: center;
       letter-spacing: 0.01em;
+      white-space: nowrap;
       pointer-events: none;
+    }
+    @media (max-width: 480px) {
+      #attribution {
+        font-size: 10px;
+      }
+    }
+    @media (max-width: 360px) {
+      #attribution {
+        font-size: 9px;
+      }
     }
   </style>
 </head>
