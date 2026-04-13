@@ -1,60 +1,81 @@
 # TinyWebSDR Operations
 
-## 24h Scheduler Mode
+## Current Runtime Model
 
-Run locally:
+TinyWebSDR is currently operated in `iqproducer` mode.
 
-```bash
-./run_title_stream.sh
-```
+Runtime split:
 
-This starts:
-- `scheduler.py` (time-based band switching, A/B producer handover)
-- `ws_server.py` (WebSocket gateway with metadata broadcast)
-- `client` static server (`http://127.0.0.1:8080`)
+- `OpenWebRX` owns the radio and exports IQ through `rtltcp_compat`
+- `IQProducer` connects to OpenWebRX and writes SHM
+- `TinyWebSDR src/core_producer.py` reads IQ from SHM and generates waterfall frames
+- `TinyWebSDR src/ws_server.py` publishes websocket frames to browsers
+- `python -m http.server 8080` serves the local static client
 
-## systemd Setup (WSL Ubuntu 22.04)
+## Manual Startup
 
-### 1) Create service file
-
-Create `/etc/systemd/system/tinywebsdr-title.service`:
-
-```ini
-[Unit]
-Description=TinyWebSDR 24h title stream
-After=network.target
-
-[Service]
-Type=simple
-User=kakut
-WorkingDirectory=/mnt/c/Workspace/Codex/TinyWebSDR
-Environment=PYTHONUNBUFFERED=1
-ExecStart=/usr/bin/env bash -lc 'source .venv/bin/activate && ./run_title_stream.sh'
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Adjust `User` and `WorkingDirectory` as needed.
-
-### 2) Reload and enable
+Start `IQProducer` first:
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable tinywebsdr-title.service
-sudo systemctl start tinywebsdr-title.service
+cd /home/moai/Workspace/Codex/IQProducer
+./run_ubuntu22.sh run-soapy \
+  --prefix iqproducer \
+  --host 127.0.0.1 \
+  --port 12345 \
+  --sample-rate 768000 \
+  --center-freq 14070000
 ```
 
-### 3) Verify and logs
+Then start TinyWebSDR:
 
 ```bash
-sudo systemctl status tinywebsdr-title.service
-journalctl -u tinywebsdr-title.service -f
+cd /home/moai/Workspace/Codex/TinyWebSDR
+./script/run_mvp.sh --source iqproducer --iq-prefix iqproducer
+```
+
+LAN client example:
+
+```text
+http://192.168.219.109:8080
+```
+
+## Startup Order
+
+Recommended order:
+
+1. `openwebrx.service`
+2. `iqproducer.service` or manual `IQProducer run-soapy`
+3. `TinyWebSDR script/run_mvp.sh`
+
+TinyWebSDR startup fails if `iqproducer_control` is not present yet.
+
+## Common Checks
+
+Check TinyWebSDR processes:
+
+```bash
+ps -ef | grep -E 'TinyWebSDR/src/core_producer.py|TinyWebSDR/src/ws_server.py|http.server 8080' | grep -v grep
+```
+
+Check IQProducer SHM:
+
+```bash
+cd /home/moai/Workspace/Codex/IQProducer
+./run_ubuntu22.sh inspect --prefix iqproducer
+```
+
+Check IQProducer service logs:
+
+```bash
+systemctl status iqproducer.service --no-pager
+sudo journalctl -u iqproducer.service -f
 ```
 
 ## Notes
 
-- Metadata overlay in browser can be toggled with `Meta On/Off` button or `M`.
-- Band state file path default: `runtime/band_state.json`.
+- TinyWebSDR does not independently tune the radio in `iqproducer` mode.
+- The visible passband follows whatever OpenWebRX is currently serving.
+- The browser websocket URL is now Caddy-friendly:
+  - direct access from `:8080` uses `ws://host:8765`
+  - reverse-proxied HTTPS access can use same-origin `/ws`
+- The waterfall FFT removes residual DC bias before rendering to suppress the center spike.

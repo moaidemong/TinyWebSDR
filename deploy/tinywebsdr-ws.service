@@ -1,0 +1,17 @@
+[Unit]
+Description=TinyWebSDR websocket gateway
+After=tinywebsdr-producer.service
+Wants=tinywebsdr-producer.service
+
+[Service]
+Type=simple
+User=moai
+Group=moai
+WorkingDirectory=/home/moai/Workspace/Codex/TinyWebSDR
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/moai/Workspace/Codex/TinyWebSDR/.venv/bin/python /home/moai/Workspace/Codex/TinyWebSDR/src/ws_server.py --host 127.0.0.1 --port 8765
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

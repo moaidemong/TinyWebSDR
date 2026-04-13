@@ -1,7 +1,7 @@
 # TinyWebSDR WebSocket Protocol (MVP)
 
 ## Scope
-- This document defines the binary frame between `ws_server.py` and browser client.
+- This document defines the binary frame between `src/ws_server.py` and browser client.
 - Source data contract comes from `docs/ARCHITECTURE.md`.
 
 ## Transport

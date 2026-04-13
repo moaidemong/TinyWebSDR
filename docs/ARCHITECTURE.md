@@ -14,10 +14,10 @@
 - Three.js renderer: Phase 2 after MVP metrics are satisfied.
 
 ## Pipeline
-1. `core_producer.py` opens RTL-SDR device via Python RTL-SDR API.
+1. `src/core_producer.py` opens RTL-SDR device via Python RTL-SDR API.
 2. Producer reads IQ samples, performs windowing + FFT, and converts to dB row.
 3. Producer writes only latest row to shared memory (`latest-only` policy).
-4. `ws_server.py` reads latest row and pushes to browser over WebSocket.
+4. `src/ws_server.py` reads latest row and pushes to browser over WebSocket.
 5. Browser app draws each row into waterfall texture on 2D canvas.
 
 ## Data Contract (MVP)
@@ -46,9 +46,9 @@
 - Linux runtime: WSL2 Ubuntu 22.04.
 - SDR stack runs inside one runtime boundary (prefer WSL2 end-to-end).
 - Components:
-  - `core_producer.py`
+  - `src/core_producer.py`
   - shared memory segment
-  - `ws_server.py`
+  - `src/ws_server.py`
   - browser client
 
 ## Development Environment

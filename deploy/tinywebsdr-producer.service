@@ -1,0 +1,17 @@
+[Unit]
+Description=TinyWebSDR producer
+After=iqproducer.service
+Wants=iqproducer.service
+
+[Service]
+Type=simple
+User=moai
+Group=moai
+WorkingDirectory=/home/moai/Workspace/Codex/TinyWebSDR
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/moai/Workspace/Codex/TinyWebSDR/.venv/bin/python /home/moai/Workspace/Codex/TinyWebSDR/src/core_producer.py --source iqproducer --iq-prefix iqproducer --fps 60 --db-offset 0
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

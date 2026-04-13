@@ -6,35 +6,21 @@
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <title>TinyWebSDR MVP</title>
+  <title>TinySDR - setflux</title>
   <style>
-    html, body { margin: 0; height: 100%; background: #00040f; overflow: hidden; }
+    html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
     canvas { width: 100%; height: 100%; image-rendering: pixelated; display: block; }
-    .meta {
+    .hud {
       position: fixed;
-      top: 10px;
-      left: 10px;
+      top: 12px;
+      left: 12px;
       z-index: 20;
-      color: #b8d8ff;
-      background: rgba(4, 10, 26, 0.78);
-      border: 1px solid rgba(120, 160, 220, 0.35);
-      border-radius: 6px;
-      padding: 6px 9px;
-      font: 12px/1.4 Consolas, "Courier New", monospace;
+      color: rgba(255, 255, 255, 0.96);
+      background: #0000008c;
+      border: 1px solid rgba(255, 255, 255, 0.35);
+      padding: 8px 10px;
+      font: 12px/1.4 "Segoe UI", sans-serif;
       white-space: pre-line;
-    }
-    .meta-toggle {
-      position: fixed;
-      top: 10px;
-      right: 10px;
-      z-index: 21;
-      border: 1px solid rgba(120, 160, 220, 0.4);
-      background: rgba(8, 12, 20, 0.8);
-      color: #dceaff;
-      border-radius: 6px;
-      padding: 6px 8px;
-      font: 12px/1 Consolas, "Courier New", monospace;
-      cursor: pointer;
     }
     .hover-tip {
       position: fixed;
@@ -73,23 +59,38 @@
       height: 58px;
       display: block;
     }
+    #attribution {
+      position: fixed;
+      left: 50%;
+      bottom: 12px;
+      z-index: 18;
+      margin: 0;
+      transform: translateX(-50%);
+      color: rgba(255, 255, 255, 0.62);
+      font: 11px/1.45 "Segoe UI", sans-serif;
+      text-align: center;
+      letter-spacing: 0.01em;
+      pointer-events: none;
+    }
   </style>
 </head>
 <body>
   <canvas id="wf" width="1920" height="900"></canvas>
-  <div id="meta" class="meta" hidden></div>
-  <button id="metaToggle" class="meta-toggle" type="button">Meta Off</button>
+  <div id="meta" class="hud"></div>
   <div id="hoverTip" class="hover-tip" hidden></div>
   <div id="wavePanel" class="wave-panel" hidden>
     <div id="waveFreq" class="wave-freq">-</div>
     <canvas id="waveCanvas" class="wave-canvas" width="304" height="58"></canvas>
   </div>
+  <p id="attribution">
+    TinySDR real-time RF/IQ waterfall visualization and browser SDR interface<br>
+    Copyright © 2026 setflux. All rights reserved.
+  </p>
   <script>
     const HEADER = 14;
     const canvas = document.getElementById("wf");
     const ctx = canvas.getContext("2d");
     const metaEl = document.getElementById("meta");
-    const metaToggleEl = document.getElementById("metaToggle");
     const hoverTipEl = document.getElementById("hoverTip");
     const wavePanelEl = document.getElementById("wavePanel");
     const waveFreqEl = document.getElementById("waveFreq");
@@ -114,14 +115,12 @@
     let lastHoverSendTs = 0;
     let latestAMWave = null;
     let latestAMWaveTs = 0;
+    const NOISE_FLOOR_LIFT = 14;
 
     let rowImage = ctx.createImageData(1024, 1);
-    let metaVisible = localStorage.getItem("tinywebsdr_meta_visible") === "1";
     let currentMeta = {
-      band_name: "-",
       center_freq_hz: null,
       sample_rate_hz: null,
-      next_change_epoch_sec: null,
     };
     const params = new URLSearchParams(location.search);
     if (params.has("center")) currentMeta.center_freq_hz = Number(params.get("center"));
@@ -129,11 +128,11 @@
     const pal = new Uint8Array(256 * 3);
     function lerp(a, b, t) { return a + (b - a) * t; }
     function buildClassicPalette() {
-      // SDR++-like classic palette: deep blue -> cyan -> yellow/orange -> white.
+      // Black-base palette: black floor -> blue/cyan -> yellow/orange -> white.
       const stops = [
-        [0.00, [0, 0, 4]],
-        [0.20, [0, 0, 28]],
-        [0.45, [0, 25, 120]],
+        [0.00, [0, 0, 0]],
+        [0.24, [0, 0, 0]],
+        [0.44, [0, 18, 92]],
         [0.68, [0, 120, 255]],
         [0.82, [255, 210, 70]],
         [0.92, [255, 120, 40]],
@@ -168,9 +167,9 @@
     resizeCanvas();
     window.addEventListener("resize", resizeCanvas);
 
-    function fmtMHz(v) {
-      if (!v || !Number.isFinite(v)) return "-";
-      return (v / 1_000_000).toFixed(3) + " MHz";
+    function fmtHudHz(v) {
+      if (!Number.isFinite(v) || v <= 0) return "-";
+      return `${Math.round(v).toLocaleString("en-US")} Hz`;
     }
 
     function fmtHz(v) {
@@ -179,30 +178,11 @@
       return `${khz}KHz`;
     }
 
-    function fmtLocal(v) {
-      if (!v || !Number.isFinite(v)) return "-";
-      return new Date(v * 1000).toLocaleString();
-    }
-
     function renderMeta() {
       metaEl.textContent =
-`Band: ${currentMeta.band_name || "-"}
-Center: ${fmtMHz(currentMeta.center_freq_hz)}
-Span: ${fmtMHz(currentMeta.sample_rate_hz)}
-Next: ${fmtLocal(currentMeta.next_change_epoch_sec)}`;
-      metaEl.hidden = !metaVisible;
-      metaToggleEl.textContent = metaVisible ? "Meta On" : "Meta Off";
+`Center Freq (Hz): ${fmtHudHz(currentMeta.center_freq_hz)}
+Sample Rate (Hz): ${fmtHudHz(currentMeta.sample_rate_hz)}`;
     }
-
-    metaToggleEl.addEventListener("click", () => {
-      metaVisible = !metaVisible;
-      localStorage.setItem("tinywebsdr_meta_visible", metaVisible ? "1" : "0");
-      renderMeta();
-    });
-
-    window.addEventListener("keydown", (ev) => {
-      if (ev.key.toLowerCase() === "m") metaToggleEl.click();
-    });
     renderMeta();
 
     function estimateLevels(row) {
@@ -211,7 +191,7 @@ Next: ${fmtLocal(currentMeta.next_change_epoch_sec)}`;
       const sampled = [];
       for (let i = 0; i < row.length; i += stride) sampled.push(row[i]);
       const sorted = sampled.sort((a, b) => a - b);
-      const p30 = sorted[Math.floor(sorted.length * 0.30)];
+      const p30 = sorted[Math.floor(sorted.length * 0.18)];
       const p998 = sorted[Math.floor(sorted.length * 0.998)];
       return [p30, p998];
     }
@@ -236,11 +216,11 @@ Next: ${fmtLocal(currentMeta.next_change_epoch_sec)}`;
       const d = rowImage.data;
       for (let x = 0; x < displayBins; x++) {
         const src = bucketPeak(row, x, displayBins);
-        const normalized = (src - (emaLow + 6)) / range;
+        const normalized = (src - (emaLow + NOISE_FLOOR_LIFT)) / range;
         const mapped = Math.max(0, Math.min(1, normalized));
         let tone = Math.pow(mapped, 1.65);
-        tone += Math.pow(mapped, 7.0) * 0.20;
-        if (tone < 0.008) tone = 0;
+        tone += Math.pow(mapped, 7.0) * 0.14;
+        if (tone < 0.010) tone = 0;
         const v = Math.round(Math.min(1, tone) * 255);
         const p = x * 4;
         d[p] = pal[v * 3];
@@ -385,7 +365,7 @@ Next: ${fmtLocal(currentMeta.next_change_epoch_sec)}`;
         }
       }
       const range = Math.max(34, emaHigh - emaLow);
-      const strength = (peakVal - (emaLow + 6)) / range;
+      const strength = (peakVal - (emaLow + NOISE_FLOOR_LIFT)) / range;
       if (strength < 0.14) {
         hoverState.strong = false;
         hideHoverTip();
@@ -418,7 +398,7 @@ Next: ${fmtLocal(currentMeta.next_change_epoch_sec)}`;
     function hoverTick() {
       if (hoverState.inside && hoverState.strong && lastRow && hoverState.peakBin >= 0 && hoverState.peakBin < lastRow.length) {
         const range = Math.max(34, emaHigh - emaLow);
-        const strengthNow = (lastRow[hoverState.peakBin] - (emaLow + 6)) / range;
+        const strengthNow = (lastRow[hoverState.peakBin] - (emaLow + NOISE_FLOOR_LIFT)) / range;
         if (strengthNow < 0.12) {
           hoverState.strong = false;
           hideWavePanel();
@@ -450,7 +430,24 @@ Next: ${fmtLocal(currentMeta.next_change_epoch_sec)}`;
       return { seq, tCapture, row };
     }
 
-    const ws = new WebSocket(`ws://${location.hostname || "127.0.0.1"}:8765`);
+    function buildWebSocketUrl() {
+      const override = params.get("ws");
+      if (override) return override;
+
+      const scheme = location.protocol === "https:" ? "wss" : "ws";
+      const host = location.hostname || "127.0.0.1";
+
+      // Keep direct TinyWebSDR access working when the static client is served
+      // from the local Python server on :8080.
+      if (location.port === "8080") {
+        return `${scheme}://${host}:8765`;
+      }
+
+      // When fronted by Caddy, use a same-origin websocket endpoint such as /ws.
+      return `${scheme}://${location.host || host}/ws`;
+    }
+
+    const ws = new WebSocket(buildWebSocketUrl());
     ws.binaryType = "arraybuffer";
     ws.onopen = () => {};
     ws.onclose = () => {};
@@ -459,7 +456,10 @@ Next: ${fmtLocal(currentMeta.next_change_epoch_sec)}`;
         try {
           const msg = JSON.parse(ev.data);
           if (msg.type === "meta") {
-            currentMeta = msg;
+            currentMeta = {
+              center_freq_hz: Number(msg.center_freq_hz),
+              sample_rate_hz: Number(msg.sample_rate_hz),
+            };
             renderMeta();
           } else if (msg.type === "am_wave") {
             latestAMWave = msg;

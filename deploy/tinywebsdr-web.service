@@ -1,0 +1,17 @@
+[Unit]
+Description=TinyWebSDR static web server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=moai
+Group=moai
+WorkingDirectory=/home/moai/Workspace/Codex/TinyWebSDR/client
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/moai/Workspace/Codex/TinyWebSDR/.venv/bin/python -m http.server 8080 --bind 127.0.0.1
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
