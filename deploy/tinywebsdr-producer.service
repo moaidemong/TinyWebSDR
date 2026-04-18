@@ -1,7 +1,9 @@
 [Unit]
 Description=TinyWebSDR producer
 After=iqproducer.service
-Wants=iqproducer.service
+Wants=iqproducer.service tinywebsdr-ws.service
+PartOf=iqproducer.service
+BindsTo=iqproducer.service
 
 [Service]
 Type=simple

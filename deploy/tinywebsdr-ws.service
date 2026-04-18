@@ -2,6 +2,8 @@
 Description=TinyWebSDR websocket gateway
 After=tinywebsdr-producer.service
 Wants=tinywebsdr-producer.service
+PartOf=tinywebsdr-producer.service
+BindsTo=tinywebsdr-producer.service
 
 [Service]
 Type=simple
